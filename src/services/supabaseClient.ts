@@ -70,5 +70,20 @@ export const bloodPressureService = {
     if (error) {
       throw new Error(`Failed to delete reading: ${error.message}`);
     }
+  },
+
+  async getReadingsByDateRange(startDate: Date, endDate: Date) {
+    const { data, error } = await supabase
+      .from('blood_pressure_readings')
+      .select('*')
+      .gte('timestamp', startDate.toISOString())
+      .lte('timestamp', endDate.toISOString())
+      .order('timestamp', { ascending: true });
+
+    if (error) {
+      throw new Error(`Failed to fetch readings by date range: ${error.message}`);
+    }
+
+    return data;
   }
 };

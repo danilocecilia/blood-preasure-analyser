@@ -10,12 +10,13 @@ import {
 } from 'react-native';
 import CameraComponent from './src/components/CameraComponent';
 import ReadingsList from './src/components/ReadingsList';
+import Dashboard from './src/components/Dashboard';
 import { llmAnalysisService } from './src/services/llmAnalysis';
 import { bloodPressureService } from './src/services/supabaseClient';
 import { s3Service } from './src/services/awsS3Client';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'camera' | 'readings'>('camera');
+  const [currentTab, setCurrentTab] = useState<'camera' | 'readings' | 'dashboard'>('camera');
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handlePhotoTaken = async (uri: string) => {
@@ -92,6 +93,14 @@ export default function App() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
+            style={[styles.tab, currentTab === 'dashboard' && styles.activeTab]}
+            onPress={() => setCurrentTab('dashboard')}
+          >
+            <Text style={[styles.tabText, currentTab === 'dashboard' && styles.activeTabText]}>
+              Dashboard
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[styles.tab, currentTab === 'readings' && styles.activeTab]}
             onPress={() => setCurrentTab('readings')}
           >
@@ -105,6 +114,8 @@ export default function App() {
       <View style={styles.content}>
         {currentTab === 'camera' ? (
           <CameraComponent onPhotoTaken={handlePhotoTaken} />
+        ) : currentTab === 'dashboard' ? (
+          <Dashboard />
         ) : (
           <ReadingsList />
         )}
