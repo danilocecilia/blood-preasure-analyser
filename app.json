@@ -1,22 +1,30 @@
 {
   "expo": {
-    "name": "Blood Pressure Analyzer",
-    "slug": "blood-pressure-analyzer",
+    "name": "blood-preasure-analyser",
+    "slug": "blood-pressure-analyser",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.yourusername.bloodpressure",
+      "buildNumber": "1",
       "infoPlist": {
         "NSCameraUsageDescription": "This app uses the camera to take photos of blood pressure readings.",
-        "NSPhotoLibraryUsageDescription": "This app needs access to photo library to save blood pressure images."
+        "NSPhotoLibraryUsageDescription": "This app needs access to photo library to save blood pressure images.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -24,11 +32,15 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
+      "package": "com.yourusername.bloodpressure",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -47,7 +59,21 @@
           "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to save blood pressure images.",
           "savePhotosPermission": "Allow $(PRODUCT_NAME) to save photos to your library."
         }
-      ]
-    ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#007AFF",
+          "mode": "production"
+        }
+      ],
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "85bffea6-b364-477f-aa9f-a1054b779bb9"
+      }
+    },
+    "owner": "danilocecilia"
   }
 }

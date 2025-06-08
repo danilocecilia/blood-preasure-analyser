@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   StyleSheet,
@@ -8,16 +8,77 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import CameraComponent from './src/components/CameraComponent';
 import ReadingsList from './src/components/ReadingsList';
 import Dashboard from './src/components/Dashboard';
+import NotificationSettings from './src/components/NotificationSettings';
 import { llmAnalysisService } from './src/services/llmAnalysis';
 import { bloodPressureService } from './src/services/supabaseClient';
 import { s3Service } from './src/services/awsS3Client';
+import { notificationService } from './src/services/notificationService';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'camera' | 'readings' | 'dashboard'>('camera');
+  const [currentTab, setCurrentTab] = useState<'camera' | 'readings' | 'dashboard' | 'settings'>('camera');
   const [isProcessing, setIsProcessing] = useState(false);
+  const notificationListener = useRef<Notifications.Subscription>();
+  const responseListener = useRef<Notifications.Subscription>();
+
+  useEffect(() => {
+    initializeNotifications();
+
+    // Set up notification listeners
+    notificationListener.current = notificationService.addNotificationReceivedListener(notification => {
+      console.log('Notification received:', notification);
+    });
+
+    responseListener.current = notificationService.addNotificationResponseListener(response => {
+      const data = response.notification.request.content.data;
+      
+      // Handle different notification types
+      switch (data?.type) {
+        case 'daily_reminder':
+          setCurrentTab('camera');
+          break;
+        case 'health_alert':
+          setCurrentTab('readings');
+          break;
+        case 'weekly_report':
+          setCurrentTab('dashboard');
+          break;
+        default:
+          break;
+      }
+    });
+
+    return () => {
+      if (notificationListener.current) {
+        notificationService.removeNotificationListener(notificationListener.current);
+      }
+      if (responseListener.current) {
+        notificationService.removeNotificationListener(responseListener.current);
+      }
+    };
+  }, []);
+
+  const initializeNotifications = async () => {
+    try {
+      const success = await notificationService.initialize();
+      if (success) {
+        console.log('Notifications initialized successfully');
+        // Schedule default notifications
+        const defaultSettings = {
+          dailyReminder: true,
+          reminderTime: '20:00',
+          weeklyReport: true,
+        };
+        await notificationService.scheduleDailyReminder(defaultSettings);
+        await notificationService.scheduleWeeklyReport(true);
+      }
+    } catch (error) {
+      console.error('Error initializing notifications:', error);
+    }
+  };
 
   const handlePhotoTaken = async (uri: string) => {
     setIsProcessing(true);
@@ -61,6 +122,9 @@ export default function App() {
         image_url: imageUrl,
         notes: analysisResult.notes,
       });
+
+      // Send health alert notification if needed (this would be implemented in the notification service)
+      // await notificationService.sendHealthAlert(analysisResult.systolic, analysisResult.diastolic);
 
       Alert.alert('Success', 'Blood pressure reading saved successfully!');
       setCurrentTab('readings');
@@ -108,6 +172,14 @@ export default function App() {
               Readings
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, currentTab === 'settings' && styles.activeTab]}
+            onPress={() => setCurrentTab('settings')}
+          >
+            <Text style={[styles.tabText, currentTab === 'settings' && styles.activeTabText]}>
+              Settings
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -116,6 +188,8 @@ export default function App() {
           <CameraComponent onPhotoTaken={handlePhotoTaken} />
         ) : currentTab === 'dashboard' ? (
           <Dashboard />
+        ) : currentTab === 'settings' ? (
+          <NotificationSettings />
         ) : (
           <ReadingsList />
         )}
@@ -165,7 +239,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
   },
   tabText: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '600',
     color: '#666',
   },
