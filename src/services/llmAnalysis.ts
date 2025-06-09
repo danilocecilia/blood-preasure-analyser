@@ -1,3 +1,5 @@
+import { userProfileService, UserProfile } from './supabaseClient';
+
 export interface AnalysisResult {
   systolic: number;
   diastolic: number;
@@ -14,11 +16,12 @@ export const llmAnalysisService = {
   async analyzeBloodPressureImage(imageUri: string): Promise<AnalysisResult> {
     try {
       const base64Image = await this.convertImageToBase64(imageUri);
+      const userProfile = await userProfileService.getProfile();
       
       if (OPENAI_API_KEY) {
-        return await this.analyzeWithOpenAI(base64Image);
+        return await this.analyzeWithOpenAI(base64Image, userProfile);
       } else if (ANTHROPIC_API_KEY) {
-        return await this.analyzeWithAnthropic(base64Image);
+        return await this.analyzeWithAnthropic(base64Image, userProfile);
       } else {
         throw new Error('No LLM API key configured');
       }
@@ -26,6 +29,51 @@ export const llmAnalysisService = {
       console.error('Error analyzing image:', error);
       throw new Error('Failed to analyze blood pressure reading');
     }
+  },
+
+  generatePersonalizedPrompt(userProfile: UserProfile | null): string {
+    let contextualInfo = '';
+    
+    if (userProfile) {
+      const age = userProfile.date_of_birth ? this.calculateAge(userProfile.date_of_birth) : null;
+      const bmi = userProfile.weight_kg && userProfile.height_cm ? 
+        this.calculateBMI(userProfile.weight_kg, userProfile.height_cm) : null;
+      
+      contextualInfo = `
+      Patient Context:
+      - Age: ${age ? `${age} years` : 'Not specified'}
+      - Gender: ${userProfile.gender || 'Not specified'}
+      - BMI: ${bmi ? `${bmi} (${this.getBMICategory(parseFloat(bmi))})` : 'Not available'}
+      - Medical Conditions: ${userProfile.medical_conditions?.length ? userProfile.medical_conditions.join(', ') : 'None reported'}
+      - Current Medications: ${userProfile.medications?.length ? userProfile.medications.join(', ') : 'None reported'}
+      
+      Please provide age-appropriate and contextually relevant health insights based on this profile.`;
+    }
+
+    return contextualInfo;
+  },
+
+  calculateAge(dateOfBirth: string): number {
+    const today = new Date();
+    const birthDate = new Date(dateOfBirth);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age;
+  },
+
+  calculateBMI(weightKg: number, heightCm: number): string {
+    const heightM = heightCm / 100;
+    return (weightKg / (heightM * heightM)).toFixed(1);
+  },
+
+  getBMICategory(bmi: number): string {
+    if (bmi < 18.5) return 'Underweight';
+    if (bmi < 25) return 'Normal weight';
+    if (bmi < 30) return 'Overweight';
+    return 'Obese';
   },
 
   async convertImageToBase64(imageUri: string): Promise<string> {
@@ -43,7 +91,9 @@ export const llmAnalysisService = {
     });
   },
 
-  async analyzeWithOpenAI(base64Image: string): Promise<AnalysisResult> {
+  async analyzeWithOpenAI(base64Image: string, userProfile: UserProfile | null): Promise<AnalysisResult> {
+    const contextualInfo = this.generatePersonalizedPrompt(userProfile);
+    
     const prompt = `Analyze this blood pressure monitor display image and extract the following information in JSON format:
     {
       "systolic": number,
@@ -51,10 +101,18 @@ export const llmAnalysisService = {
       "pulse": number,
       "timestamp": "ISO string of current time",
       "confidence": number (0-1),
-      "notes": "any relevant observations"
+      "notes": "any relevant observations and personalized health insights"
     }
     
-    Look for the systolic (top number), diastolic (bottom number), and pulse rate. If any values are unclear or not visible, set confidence accordingly.`;
+    Look for the systolic (top number), diastolic (bottom number), and pulse rate. If any values are unclear or not visible, set confidence accordingly.
+    
+    ${contextualInfo}
+    
+    In the notes field, include:
+    1. Technical observations about the reading quality
+    2. Age-appropriate blood pressure category assessment
+    3. Relevant health recommendations based on the patient profile
+    4. Any concerns or positive observations about the readings`;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -121,7 +179,9 @@ export const llmAnalysisService = {
     }
   },
 
-  async analyzeWithAnthropic(base64Image: string): Promise<AnalysisResult> {
+  async analyzeWithAnthropic(base64Image: string, userProfile: UserProfile | null): Promise<AnalysisResult> {
+    const contextualInfo = this.generatePersonalizedPrompt(userProfile);
+    
     const prompt = `Analyze this blood pressure monitor display image and extract the following information in JSON format:
     {
       "systolic": number,
@@ -129,10 +189,18 @@ export const llmAnalysisService = {
       "pulse": number,
       "timestamp": "ISO string of current time",
       "confidence": number (0-1),
-      "notes": "any relevant observations"
+      "notes": "any relevant observations and personalized health insights"
     }
     
-    Look for the systolic (top number), diastolic (bottom number), and pulse rate. If any values are unclear or not visible, set confidence accordingly.`;
+    Look for the systolic (top number), diastolic (bottom number), and pulse rate. If any values are unclear or not visible, set confidence accordingly.
+    
+    ${contextualInfo}
+    
+    In the notes field, include:
+    1. Technical observations about the reading quality
+    2. Age-appropriate blood pressure category assessment
+    3. Relevant health recommendations based on the patient profile
+    4. Any concerns or positive observations about the readings`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

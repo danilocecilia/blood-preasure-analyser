@@ -9,22 +9,28 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as Linking from 'expo-linking';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import CameraComponent from './src/components/CameraComponent';
 import ReadingsList from './src/components/ReadingsList';
 import Dashboard from './src/components/Dashboard';
 import NotificationSettings from './src/components/NotificationSettings';
+import UserProfile from './src/components/UserProfile';
+import AuthScreen from './src/components/AuthScreen';
 import { llmAnalysisService } from './src/services/llmAnalysis';
 import { bloodPressureService } from './src/services/supabaseClient';
 import { s3Service } from './src/services/awsS3Client';
 import { notificationService } from './src/services/notificationService';
 
-export default function App() {
-  const [currentTab, setCurrentTab] = useState<'camera' | 'readings' | 'dashboard' | 'settings'>('camera');
+function AppContent() {
+  const { user, loading, isAuthenticated, signOut } = useAuth();
+  const [currentTab, setCurrentTab] = useState<'camera' | 'readings' | 'dashboard' | 'profile' | 'settings'>('dashboard');
   const [isProcessing, setIsProcessing] = useState(false);
   const notificationListener = useRef<Notifications.Subscription>();
   const responseListener = useRef<Notifications.Subscription>();
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     initializeNotifications();
 
     // Set up notification listeners
@@ -59,7 +65,22 @@ export default function App() {
         notificationService.removeNotificationListener(responseListener.current);
       }
     };
-  }, []);
+  }, [isAuthenticated]);
+
+  // Show loading screen while checking authentication
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Show auth screen if not authenticated
+  if (!isAuthenticated) {
+    return <AuthScreen />;
+  }
 
   const initializeNotifications = async () => {
     try {
@@ -146,7 +167,12 @@ export default function App() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Blood Pressure Analyzer</Text>
+        <View style={styles.headerTop}>
+          <Text style={styles.title}>Blood Pressure Analyzer</Text>
+          <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
+            <Text style={styles.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tab, currentTab === 'camera' && styles.activeTab]}
@@ -173,6 +199,14 @@ export default function App() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
+            style={[styles.tab, currentTab === 'profile' && styles.activeTab]}
+            onPress={() => setCurrentTab('profile')}
+          >
+            <Text style={[styles.tabText, currentTab === 'profile' && styles.activeTabText]}>
+              Profile
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[styles.tab, currentTab === 'settings' && styles.activeTab]}
             onPress={() => setCurrentTab('settings')}
           >
@@ -188,6 +222,8 @@ export default function App() {
           <CameraComponent onPhotoTaken={handlePhotoTaken} />
         ) : currentTab === 'dashboard' ? (
           <Dashboard />
+        ) : currentTab === 'profile' ? (
+          <UserProfile />
         ) : currentTab === 'settings' ? (
           <NotificationSettings />
         ) : (
@@ -200,10 +236,53 @@ export default function App() {
   );
 }
 
+export default function App() {
+  useEffect(() => {
+    // Handle deep linking for OAuth callbacks
+    const handleUrl = (url: string) => {
+      console.log('Deep link received:', url);
+      // The auth service will handle the URL processing
+    };
+
+    // Handle initial URL if app was opened from a link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleUrl(url);
+      }
+    });
+
+    // Listen for deep links while app is running
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleUrl(url);
+    });
+
+    return () => {
+      subscription?.remove();
+    };
+  }, []);
+
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
   },
   header: {
     backgroundColor: 'white',
@@ -216,12 +295,28 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20,
     color: '#333',
+    flex: 1,
+  },
+  signOutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 6,
+  },
+  signOutText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
   },
   tabContainer: {
     flexDirection: 'row',

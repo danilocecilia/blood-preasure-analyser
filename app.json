@@ -2,6 +2,7 @@
   "expo": {
     "name": "blood-preasure-analyser",
     "slug": "blood-pressure-analyser",
+    "scheme": "bloodpressureanalyzer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
