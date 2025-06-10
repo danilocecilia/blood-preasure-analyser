@@ -11,6 +11,7 @@ import {
   Modal,
   TextInput,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { bloodPressureService, BloodPressureReading } from '../services/supabaseClient';
 
@@ -25,6 +26,10 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [editingReading, setEditingReading] = useState<BloodPressureReading | null>(null);
   const [editForm, setEditForm] = useState({ systolic: '', diastolic: '', pulse: '', notes: '' });
+  const [expandedReadings, setExpandedReadings] = useState<Set<string>>(new Set());
+  const [deleteConfirmReading, setDeleteConfirmReading] = useState<BloodPressureReading | null>(null);
+  const [editAnimation] = useState(new Animated.Value(0));
+  const [deleteAnimation] = useState(new Animated.Value(0));
 
   const loadReadings = async () => {
     try {
@@ -45,27 +50,37 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
     onRefresh?.();
   };
 
-  const deleteReading = async (id: string) => {
-    Alert.alert(
-      'Delete Reading',
-      'Are you sure you want to delete this reading?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await bloodPressureService.deleteReading(id);
-              await loadReadings();
-            } catch (error) {
-              Alert.alert('Error', 'Failed to delete reading');
-              console.error('Delete reading error:', error);
-            }
-          },
-        },
-      ]
-    );
+  const showDeleteConfirmation = (reading: BloodPressureReading) => {
+    setDeleteConfirmReading(reading);
+    Animated.spring(deleteAnimation, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 100,
+      friction: 8,
+    }).start();
+  };
+
+  const hideDeleteConfirmation = () => {
+    Animated.timing(deleteAnimation, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setDeleteConfirmReading(null);
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmReading) return;
+    
+    try {
+      await bloodPressureService.deleteReading(deleteConfirmReading.id!);
+      hideDeleteConfirmation();
+      await loadReadings();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to delete reading');
+      console.error('Delete reading error:', error);
+    }
   };
 
   const openEditModal = (reading: BloodPressureReading) => {
@@ -75,6 +90,23 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
       diastolic: reading.diastolic.toString(),
       pulse: reading.pulse.toString(),
       notes: reading.notes || '',
+    });
+    
+    Animated.spring(editAnimation, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 100,
+      friction: 8,
+    }).start();
+  };
+
+  const closeEditModal = () => {
+    Animated.timing(editAnimation, {
+      toValue: 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setEditingReading(null);
     });
   };
 
@@ -91,7 +123,7 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
       };
       
       await bloodPressureService.updateReading(editingReading.id!, updatedReading);
-      setEditingReading(null);
+      closeEditModal();
       await loadReadings();
       Alert.alert('Success', 'Reading updated successfully');
     } catch (error) {
@@ -108,21 +140,92 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
     return { category: 'Crisis', color: '#B71C1C' };
   };
 
+  const getTrendComparison = (currentReading: BloodPressureReading, index: number) => {
+    if (index >= readings.length - 1) return null;
+    
+    const previousReading = readings[index + 1];
+    const systolicDiff = currentReading.systolic - previousReading.systolic;
+    const diastolicDiff = currentReading.diastolic - previousReading.diastolic;
+    
+    const getIcon = (diff: number) => {
+      if (diff > 5) return '⬆️';
+      if (diff < -5) return '⬇️';
+      return '➡️';
+    };
+    
+    const formatDiff = (diff: number) => {
+      if (diff > 0) return `+${diff}`;
+      return diff.toString();
+    };
+    
+    return {
+      systolic: { diff: systolicDiff, icon: getIcon(systolicDiff), text: formatDiff(systolicDiff) },
+      diastolic: { diff: diastolicDiff, icon: getIcon(diastolicDiff), text: formatDiff(diastolicDiff) }
+    };
+  };
+
+  const parseAnalysisNotes = (notes: string) => {
+    if (!notes) return { summary: '', points: [] };
+    
+    // Split by common patterns and extract key points
+    const sentences = notes.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const summary = sentences[0]?.trim() || '';
+    
+    const points = sentences.slice(1).map(sentence => {
+      const trimmed = sentence.trim();
+      if (!trimmed) return null;
+      
+      // Assign icons based on content
+      let icon = '📋';
+      if (trimmed.toLowerCase().includes('normal') || trimmed.toLowerCase().includes('good')) icon = '✅';
+      if (trimmed.toLowerCase().includes('high') || trimmed.toLowerCase().includes('elevated')) icon = '⚠️';
+      if (trimmed.toLowerCase().includes('recommend') || trimmed.toLowerCase().includes('consider')) icon = '💡';
+      if (trimmed.toLowerCase().includes('concern') || trimmed.toLowerCase().includes('monitor')) icon = '🩺';
+      
+      return { icon, text: trimmed };
+    }).filter(Boolean);
+    
+    return { summary, points };
+  };
+
+  const toggleExpanded = (readingId: string) => {
+    const newExpanded = new Set(expandedReadings);
+    if (newExpanded.has(readingId)) {
+      newExpanded.delete(readingId);
+    } else {
+      newExpanded.add(readingId);
+    }
+    setExpandedReadings(newExpanded);
+  };
+
   useEffect(() => {
     loadReadings();
   }, []);
 
-  const renderReading = ({ item }: { item: BloodPressureReading }) => {
+  const renderReading = ({ item, index }: { item: BloodPressureReading; index: number }) => {
     const { category, color } = getBloodPressureCategory(item.systolic, item.diastolic);
     const date = new Date(item.timestamp);
+    const trend = getTrendComparison(item, index);
+    const analysis = parseAnalysisNotes(item.notes || '');
+    const isExpanded = expandedReadings.has(item.id!);
 
     return (
       <View style={styles.readingCard}>
         <View style={styles.readingHeader}>
           <View style={styles.readingValues}>
-            <Text style={styles.pressureText}>
-              {item.systolic}/{item.diastolic}
-            </Text>
+            <View style={styles.pressureRow}>
+              <Text style={styles.pressureText}>
+                {item.systolic}/{item.diastolic}
+              </Text>
+              {trend && (
+                <View style={styles.trendContainer}>
+                  <Text style={styles.trendText}>
+                    {trend.systolic.icon} {trend.systolic.text}/{trend.diastolic.text}
+                  </Text>
+                  <Text style={styles.trendLabel}>vs last reading</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.pulseText}>♥ {item.pulse} bpm</Text>
           </View>
           <View style={[styles.categoryBadge, { backgroundColor: color }]}>
@@ -134,8 +237,32 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
           {date.toLocaleDateString()} at {date.toLocaleTimeString()}
         </Text>
         
-        {item.notes && (
-          <Text style={styles.notesText}>{item.notes}</Text>
+        {analysis.summary && (
+          <View style={styles.analysisContainer}>
+            <Text style={styles.analysisSummary}>💬 {analysis.summary}</Text>
+            
+            {analysis.points.length > 0 && (
+              <TouchableOpacity 
+                style={styles.expandButton}
+                onPress={() => toggleExpanded(item.id!)}
+              >
+                <Text style={styles.expandButtonText}>
+                  {isExpanded ? '🔽 Hide Details' : '🔼 View Analysis'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            
+            {isExpanded && analysis.points.length > 0 && (
+              <View style={styles.analysisPoints}>
+                {analysis.points.map((point, idx) => (
+                  <View key={idx} style={styles.analysisPoint}>
+                    <Text style={styles.pointIcon}>{point.icon}</Text>
+                    <Text style={styles.pointText}>{point.text}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         )}
         
         {item.image_url && (
@@ -144,7 +271,7 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
             onPress={() => setSelectedImage(item.image_url!)}
           >
             <Image source={{ uri: item.image_url }} style={styles.thumbnailImage} />
-            <Text style={styles.imageText}>View Image</Text>
+            <Text style={styles.imageText}>📷 View Original</Text>
           </TouchableOpacity>
         )}
         
@@ -152,14 +279,16 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
           <TouchableOpacity
             style={styles.editButton}
             onPress={() => openEditModal(item)}
+            activeOpacity={0.8}
           >
-            <Text style={styles.editButtonText}>Edit</Text>
+            <Text style={styles.editButtonText}>✏️ Edit</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.deleteButton}
-            onPress={() => deleteReading(item.id!)}
+            onPress={() => showDeleteConfirmation(item)}
+            activeOpacity={0.8}
           >
-            <Text style={styles.deleteButtonText}>Delete</Text>
+            <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -216,10 +345,32 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
       <Modal
         visible={editingReading !== null}
         transparent={true}
-        onRequestClose={() => setEditingReading(null)}
+        onRequestClose={closeEditModal}
+        animationType="none"
       >
         <View style={styles.editModalOverlay}>
-          <View style={styles.editModalContainer}>
+          <Animated.View 
+            style={[
+              styles.editModalContainer,
+              {
+                transform: [
+                  {
+                    translateY: editAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [300, 0],
+                    }),
+                  },
+                  {
+                    scale: editAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.9, 1],
+                    }),
+                  },
+                ],
+                opacity: editAnimation,
+              }
+            ]}
+          >
             <Text style={styles.editModalTitle}>Edit Reading</Text>
             
             <ScrollView style={styles.editForm}>
@@ -271,7 +422,7 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
             <View style={styles.editModalButtons}>
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={() => setEditingReading(null)}
+                onPress={closeEditModal}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
@@ -282,7 +433,76 @@ export default function ReadingsList({ onRefresh }: ReadingsListProps) {
                 <Text style={styles.saveButtonText}>Save</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </Animated.View>
+        </View>
+      </Modal>
+      
+      {/* Delete Confirmation Modal */}
+      <Modal
+        visible={deleteConfirmReading !== null}
+        transparent={true}
+        onRequestClose={hideDeleteConfirmation}
+        animationType="none"
+      >
+        <View style={styles.deleteModalOverlay}>
+          <Animated.View 
+            style={[
+              styles.deleteModalContainer,
+              {
+                transform: [
+                  {
+                    translateY: deleteAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [200, 0],
+                    }),
+                  },
+                ],
+                opacity: deleteAnimation,
+              }
+            ]}
+          >
+            <View style={styles.deleteModalHeader}>
+              <Text style={styles.deleteModalIcon}>🗑️</Text>
+              <Text style={styles.deleteModalTitle}>Delete Reading</Text>
+            </View>
+            
+            {deleteConfirmReading && (
+              <View style={styles.deleteModalContent}>
+                <Text style={styles.deleteModalText}>
+                  Are you sure you want to delete this reading?
+                </Text>
+                <View style={styles.deleteReadingPreview}>
+                  <Text style={styles.deletePreviewText}>
+                    📅 {new Date(deleteConfirmReading.timestamp).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.deletePreviewValues}>
+                    {deleteConfirmReading.systolic}/{deleteConfirmReading.diastolic} mmHg
+                  </Text>
+                  <Text style={styles.deletePreviewPulse}>
+                    ♥ {deleteConfirmReading.pulse} bpm
+                  </Text>
+                </View>
+                <Text style={styles.deleteWarningText}>
+                  ⚠️ This action cannot be undone
+                </Text>
+              </View>
+            )}
+            
+            <View style={styles.deleteModalButtons}>
+              <TouchableOpacity
+                style={styles.deleteCancelButton}
+                onPress={hideDeleteConfirmation}
+              >
+                <Text style={styles.deleteCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteConfirmButton}
+                onPress={confirmDelete}
+              >
+                <Text style={styles.deleteConfirmButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -335,10 +555,32 @@ const styles = StyleSheet.create({
   readingValues: {
     flex: 1,
   },
+  pressureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   pressureText: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
+    marginRight: 12,
+  },
+  trendContainer: {
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  trendText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#495057',
+  },
+  trendLabel: {
+    fontSize: 10,
+    color: '#6c757d',
   },
   pulseText: {
     fontSize: 16,
@@ -358,13 +600,54 @@ const styles = StyleSheet.create({
   timestampText: {
     fontSize: 14,
     color: '#666',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  notesText: {
+  analysisContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
+  },
+  analysisSummary: {
     fontSize: 14,
     color: '#333',
-    fontStyle: 'italic',
-    marginBottom: 12,
+    fontWeight: '500',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  expandButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#e9ecef',
+    borderRadius: 16,
+    marginBottom: 8,
+  },
+  expandButtonText: {
+    fontSize: 12,
+    color: '#495057',
+    fontWeight: '600',
+  },
+  analysisPoints: {
+    gap: 8,
+  },
+  analysisPoint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+  },
+  pointIcon: {
+    fontSize: 16,
+    marginRight: 8,
+    marginTop: 2,
+  },
+  pointText: {
+    fontSize: 13,
+    color: '#495057',
+    flex: 1,
+    lineHeight: 18,
   },
   deleteButton: {
     alignSelf: 'flex-end',
@@ -515,6 +798,100 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  deleteModalContainer: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    minHeight: 300,
+  },
+  deleteModalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  deleteModalIcon: {
+    fontSize: 48,
+    marginBottom: 8,
+  },
+  deleteModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+  },
+  deleteModalContent: {
+    marginBottom: 24,
+  },
+  deleteModalText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  deleteReadingPreview: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: '#dc3545',
+  },
+  deletePreviewText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  deletePreviewValues: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  deletePreviewPulse: {
+    fontSize: 14,
+    color: '#666',
+  },
+  deleteWarningText: {
+    fontSize: 14,
+    color: '#dc3545',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  deleteModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  deleteCancelButton: {
+    flex: 1,
+    paddingVertical: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  deleteCancelButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  deleteConfirmButton: {
+    flex: 1,
+    paddingVertical: 16,
+    backgroundColor: '#dc3545',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  deleteConfirmButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
